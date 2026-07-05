@@ -36,6 +36,7 @@ include("./types.jl")
 const _DEFAULT_TELEMETRY_SOURCE = Ref{TelemetrySource}()
 const _DEFAULT_TELEMETRY_PACKETS = Ref{Any}()
 const _DEFAULT_TELEMETRY_DATABASE = Ref{TelemetryDatabase}()
+const _TELEMETRY_DATABASE_REGISTRY = Dict{String, TelemetryDatabase}()
 const _INTERACTIVE_SOURCES = Vector{DataType}()
 
 ############################################################################################

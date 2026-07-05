@@ -223,10 +223,24 @@ end
 """
     set_default_telemetry_database!(database::TelemetryDatabase) -> Nothing
 
-Set the default telemetry database to `database`.
+Set the default telemetry database to `database`. `database` is also registered under its
+`label` (see [`list_telemetry_databases`](@ref) and [`get_telemetry_database`](@ref)), so it
+can be recovered later even if it is no longer the default.
 """
 function set_default_telemetry_database!(database::TelemetryDatabase)
     _DEFAULT_TELEMETRY_DATABASE[] = database
+    _TELEMETRY_DATABASE_REGISTRY[database.label] = database
+    return nothing
+end
+
+"""
+    set_default_telemetry_database!(label::AbstractString) -> Nothing
+
+Set the default telemetry database to the one already registered with `label`. Useful to
+switch back to a previously created database when more than one is loaded at the same time.
+"""
+function set_default_telemetry_database!(label::AbstractString)
+    set_default_telemetry_database!(get_telemetry_database(label))
     return nothing
 end
 

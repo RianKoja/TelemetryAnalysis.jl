@@ -1,6 +1,16 @@
 TelemetryAnalysis.jl Changelog
 ==============================
 
+Version 2.2.0
+-------------
+
+- ![Feature][badge-feature] We added a registry of telemetry databases by label. Use
+  `list_telemetry_databases` and `get_telemetry_database` to find and recover a database
+  when more than one is loaded at the same time, `set_default_telemetry_database!(label)`
+  to switch the default, and `search_variables(pattern; all = true)` or
+  `search_variables(pattern, label)` to search a specific database or all of them.
+  `@searchvar` also accepts an optional second argument with the same behavior.
+
 Version 2.1.0
 -------------
 

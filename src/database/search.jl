@@ -5,7 +5,7 @@
 ############################################################################################
 
 """
-    search_variables(pattern::T, database::TelemetryDatabase = get_default_database()) where T<:Union{AbstractString, Regex} -> Nothing
+    search_variables(pattern::T, database::TelemetryDatabase = get_default_database(); all::Bool = false) where T<:Union{AbstractString, Regex} -> Nothing
 
 Search for variables registered in `database` in which their label, alias, or description
 contains `pattern`. `pattern` can be a string or a regex.
@@ -17,11 +17,24 @@ contains `pattern`. `pattern` can be a string or a regex.
 !!! note
 
     If `database` is not provided, the default one is used.
+
+If `all` is `true`, `database` is ignored and every registered telemetry database (see
+[`list_telemetry_databases`](@ref)) is searched in turn, each preceded by its label.
 """
 function search_variables(
     pattern::T,
-    database::TelemetryDatabase = get_default_database()
+    database::TelemetryDatabase = get_default_database();
+    all::Bool = false
 ) where T<:Union{AbstractString, Regex}
+    if all
+        for label in list_telemetry_databases()
+            println(label, ":")
+            search_variables(pattern, _TELEMETRY_DATABASE_REGISTRY[label])
+            println()
+        end
+        return nothing
+    end
+
     # Prepare the crayons to highlight the output if `stdout` supports it.
     hascolor = get(stdout, :color, false)
     cr = (hascolor ? string(crayon"reset")       : "")
@@ -109,10 +122,22 @@ function search_variables(
 end
 
 """
-    @searchvar(pattern)
+    search_variables(pattern, label::AbstractString) -> Nothing
 
-Search variables in the default database in which their label, alias, or description
-contains `pattern`. For more information, see [`search_variables`](@ref).
+Search for variables in the telemetry database registered with `label` (see
+[`list_telemetry_databases`](@ref)).
+"""
+function search_variables(pattern::T, label::AbstractString) where T<:Union{AbstractString, Regex}
+    return search_variables(pattern, get_telemetry_database(label))
+end
+
+"""
+    @searchvar(pattern)
+    @searchvar(pattern, database)
+
+Search variables in `database` (a `TelemetryDatabase`, or the label of a registered one) in
+which their label, alias, or description contains `pattern`. If `database` is omitted, the
+default database is used. For more information, see [`search_variables`](@ref).
 """
 macro searchvar(pattern)
     if (pattern isa Symbol)
@@ -122,4 +147,14 @@ macro searchvar(pattern)
     end
 
     return esc(:(search_variables($str)))
+end
+
+macro searchvar(pattern, database)
+    if (pattern isa Symbol)
+        str = "$pattern"
+    else
+        str = pattern
+    end
+
+    return esc(:(search_variables($str, $database)))
 end
