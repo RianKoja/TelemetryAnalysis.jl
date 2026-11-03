@@ -304,11 +304,19 @@ Fresh uncached processing plan containing topologically ordered nodes and output
 - `nodes::Vector{AbstractExecutionNode}`: Topologically ordered heterogeneous executors.
 - `stage_masks::Vector{UInt8}`: Required cumulative stage mask for each node.
 - `outputs::Vector{OutputSpec}`: Requested outputs in user-visible column order.
+- `sequential::Vector{Bool}`: Whether each node runs in the sequential pass, because it
+    depends on itself or on another sequential node.
+- `sequential_inputs::Vector{Symbol}`: Labels of the packet-local nodes that sequential
+    nodes read, saved for each packet during the parallel pass.
+- `self_dependent::Vector{Symbol}`: Labels of the nodes that depend on themselves.
 """
 struct ExecutionPlan
     nodes::Vector{AbstractExecutionNode}
     stage_masks::Vector{UInt8}
     outputs::Vector{OutputSpec}
+    sequential::Vector{Bool}
+    sequential_inputs::Vector{Symbol}
+    self_dependent::Vector{Symbol}
 end
 
 """

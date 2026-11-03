@@ -891,3 +891,68 @@ end
     )
     @test copied.extract === nothing
 end
+
+@testset "Self-dependent variables" begin
+    database = test_database()
+    add_variable!(database, :increment, 1, 1, raw -> Int(raw), identity, bytes -> bytes[1])
+    # Read byte 2 only when byte 3 is 1, so some packets lack the reset flag.
+    add_variable!(
+        database,
+        :reset,
+        0,
+        0,
+        raw -> Int(raw),
+        identity,
+        bytes -> bytes[1];
+        extract = frame -> frame[3] == 0x01 ? view(frame, 2:2) : nothing,
+    )
+    # A counter that adds the increment while the reset flag is 0 and returns to 0 otherwise,
+    # starting from 0.
+    add_variable!(
+        database,
+        :counter,
+        (raw, context) -> begin
+            reset = context[:reset].processed
+            ismissing(reset) && return missing
+            previous = coalesce(context[:counter].processed, 0)
+            return (previous + context[:increment].processed) * (1 - reset)
+        end;
+        dependencies = [:counter, :increment, :reset],
+    )
+    add_variable!(
+        database,
+        :alarm,
+        (raw, context) -> context[:counter].processed > 4;
+        dependencies = [:counter],
+    )
+
+    # (increment, reset, has reset) per packet, in time order.
+    steps = [(1, 0, 1), (2, 0, 1), (5, 0, 0), (3, 0, 1), (1, 1, 1), (4, 0, 1)]
+    packets = [
+        packet(
+            UInt8[increment, reset, present, 0]; timestamp = DateTime(2024, 1, 1, 0, 0, i)
+        ) for (i, (increment, reset, present)) in enumerate(steps)
+    ]
+
+    # Shuffled input: the counter must still follow timestamp order.
+    for input in (packets, reverse(packets), packets[[3, 1, 6, 2, 5, 4]])
+        result = process_telemetry_packets(
+            input, [:counter, :alarm, :increment]; database, show_progress = false
+        )
+        @test isequal(result.counter, [1, 3, missing, 6, 0, 4])
+        @test isequal(result.alarm, [false, false, missing, true, false, false])
+        @test result.increment == [1, 2, 5, 3, 1, 4]
+    end
+
+    # Selecting only a dependent variable still runs its self-dependent dependency.
+    result = process_telemetry_packets(packets, [:alarm]; database, show_progress = false)
+    @test isequal(result.alarm, [false, false, missing, true, false, false])
+
+    # Two variables depending on each other are still a cycle.
+    cyclic = test_database()
+    add_variable!(cyclic, :a, (raw, context) -> 1; dependencies = [:a, :b])
+    add_variable!(cyclic, :b, (raw, context) -> 1; dependencies = [:a])
+    @test_throws ArgumentError process_telemetry_packets(
+        packets, [:a]; database = cyclic, show_progress = false
+    )
+end

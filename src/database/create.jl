@@ -162,6 +162,12 @@ raw transfer function, and the set of processed variables in `processed_variable
 signature must be used if the transfer function depends on other variables. Callbacks may
 consume only declared dependencies; context keys are canonical labels. Ordering among
 unrelated callbacks is not guaranteed, and each required stage executes once per packet.
+
+A variable may list itself in `dependencies`. Its callbacks then find under its own label
+its value from the last earlier packet, in timestamp order, in which it was not `missing`
+(`missing` values before that). This supports counters and latches. Such a variable, and
+every variable that depends on it, is evaluated after the other variables, one packet at a
+time in timestamp order, so its values depend on the packets passed in the same call.
 """
 function add_variable!(
     database::TelemetryDatabase,

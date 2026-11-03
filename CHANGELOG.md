@@ -1,6 +1,14 @@
 TelemetryAnalysis.jl Changelog
 ==============================
 
+Unreleased
+----------
+
+- ![Feature][badge-feature] A variable can list itself in `dependencies` to read its own
+  value from the previous packet, in timestamp order, which supports counters and latches.
+  Such variables, and the variables that depend on them, are evaluated after the others,
+  one packet at a time; the rest of the processing is unchanged.
+
 Version 3.1.0
 -------------
 

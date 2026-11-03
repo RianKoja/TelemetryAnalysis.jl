@@ -75,7 +75,70 @@ function _build_execution_plan(
         ) for output in outputs
     ]
 
-    return ExecutionPlan(nodes, ordered_masks, resolved_outputs)
+    sequential, sequential_inputs, self_dependent = _sequential_nodes(
+        ordered_labels, stage_masks, database, index
+    )
+
+    return ExecutionPlan(
+        nodes,
+        ordered_masks,
+        resolved_outputs,
+        sequential,
+        sequential_inputs,
+        self_dependent,
+    )
+end
+
+"""
+    _sequential_nodes(ordered_labels, stage_masks, database, index)
+        -> Tuple{Vector{Bool}, Vector{Symbol}, Vector{Symbol}}
+
+Mark the variables that depend on themselves, and every variable that depends on one of
+them, as sequential. Also return the packet-local variables that sequential ones read and
+the self-dependent labels.
+"""
+function _sequential_nodes(
+    ordered_labels::Vector{Symbol},
+    stage_masks::Dict{Symbol, UInt8},
+    database::TelemetryDatabase,
+    index::DatabaseIndex,
+)
+    # Labels are topologically ordered, so every dependency is classified before its owner.
+    is_sequential  = Dict{Symbol, Bool}()
+    inputs         = Symbol[]
+    self_dependent = Symbol[]
+
+    for label in ordered_labels
+        dependencies = _get_variable_description(label, database, index).dependencies
+        sequential = false
+
+        if stage_masks[label] & _STAGE_RAW != 0 && !isnothing(dependencies)
+            canonical = [
+                _resolve_dependency(dependency, label, database, index).label for
+                dependency in dependencies
+            ]
+            if label in canonical
+                push!(self_dependent, label)
+                sequential = true
+            end
+
+            # The variable itself is not classified yet; its other dependencies are.
+            others = filter(!=(label), canonical)
+            sequential |= any(dependency -> is_sequential[dependency], others)
+
+            if sequential
+                for dependency in others
+                    is_sequential[dependency] ||
+                        dependency in inputs ||
+                        push!(inputs, dependency)
+                end
+            end
+        end
+
+        is_sequential[label] = sequential
+    end
+
+    return [is_sequential[label] for label in ordered_labels], inputs, self_dependent
 end
 
 """
@@ -250,6 +313,10 @@ function _topological_visit!(
         if !isnothing(dependencies)
             for dependency in dependencies
                 dependency_desc = _resolve_dependency(dependency, label, database, index)
+
+                # A variable may read its own value from the previous packet.
+                dependency_desc.label == label && continue
+
                 _topological_visit!(
                     dependency_desc.label,
                     states,

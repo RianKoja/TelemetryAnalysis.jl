@@ -211,6 +211,10 @@ function _process_telemetry_packets(
     validity = Vector{Bool}(undef, packet_count)
     fill!(validity, false)
 
+    # Values the sequential pass reads from packet-local variables, saved per packet.
+    has_sequential = any(plan.sequential)
+    sequential_inputs = Vector{Vector{Any}}(undef, has_sequential ? packet_count : 0)
+
     # Check if the database supports the current telemetry source.
     if !isempty(tmpackets) && !applicable(database.unpack_telemetry, first(tmpackets))
         error("The selected database does not support telemetries from $(T).")
@@ -250,6 +254,7 @@ function _process_telemetry_packets(
             )
 
             for node_index in eachindex(plan.nodes)
+                plan.sequential[node_index] && continue
                 _execute_node!(
                     state,
                     plan.nodes[node_index],
@@ -260,9 +265,16 @@ function _process_telemetry_packets(
             end
 
             for output_index in eachindex(plan.outputs)
+                plan.sequential[plan.outputs[output_index].node_index] && continue
                 output_storage[output_index][packet_index] = _output_value(
                     state, plan.outputs[output_index]
                 )
+            end
+
+            if has_sequential
+                sequential_inputs[packet_index] = Any[
+                    state.context[label] for label in plan.sequential_inputs
+                ]
             end
 
             validity[packet_index] = true
@@ -275,6 +287,10 @@ function _process_telemetry_packets(
     # Filter validity before reading any timestamp or output slot left uninitialized.
     valid_indices = _stable_valid_indices(validity, timestamps)
 
+    has_sequential && _run_sequential_pass!(
+        output_storage, tmpackets, valid_indices, sequential_inputs, plan, database
+    )
+
     # Defer DataFrame construction until threaded writes and stable ordering are complete.
     output = _build_output_dataframe(
         timestamps, output_storage, valid_indices, plan.outputs
@@ -282,6 +298,65 @@ function _process_telemetry_packets(
 
     @info "$(nrow(output)) packets out of $packet_count were processed correctly."
     return output
+end
+
+"""
+    _run_sequential_pass!(output_storage, tmpackets, valid_indices, sequential_inputs, plan,
+                          database) -> Nothing
+
+Execute the sequential nodes packet by packet in timestamp order. A self-dependent variable
+finds in the callback context, under its own label, its value from the last packet in which
+it was not `missing`, or `missing` values before that.
+"""
+function _run_sequential_pass!(
+    output_storage::Vector{Vector{Any}},
+    tmpackets::Vector{<:TelemetryPacket},
+    valid_indices::Vector{Int},
+    sequential_inputs::Vector{Vector{Any}},
+    plan::ExecutionPlan,
+    database::TelemetryDatabase,
+)
+    buffers  = PacketExecutionState(length(plan.nodes))
+    previous = Dict{Symbol, Any}(label => (; raw = missing, processed = missing) for label in plan.self_dependent)
+
+    for packet_index in valid_indices
+        # Unpack again: the parallel pass keeps no frames, and unpacking is deterministic.
+        unpacked_frame = database.unpack_telemetry(tmpackets[packet_index])
+
+        context = Dict{Symbol, Any}(
+            zip(plan.sequential_inputs, sequential_inputs[packet_index])
+        )
+        merge!(context, previous)
+
+        state = PacketExecutionState(
+            buffers.byte_arrays, buffers.raw_values, buffers.processed_values, context
+        )
+
+        for node_index in eachindex(plan.nodes)
+            plan.sequential[node_index] || continue
+            _execute_node!(
+                state,
+                plan.nodes[node_index],
+                unpacked_frame,
+                node_index,
+                plan.stage_masks[node_index],
+            )
+        end
+
+        for label in plan.self_dependent
+            value = context[label]
+            value.processed === missing || (previous[label] = value)
+        end
+
+        for output_index in eachindex(plan.outputs)
+            plan.sequential[plan.outputs[output_index].node_index] || continue
+            output_storage[output_index][packet_index] = _output_value(
+                state, plan.outputs[output_index]
+            )
+        end
+    end
+
+    return nothing
 end
 
 """
